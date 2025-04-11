@@ -1,17 +1,16 @@
-mod header;
+mod client;
 
 use std::borrow::Cow;
+use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Ok, Result};
+use client::BetterStackClient;
 use fastrace::collector::Reporter;
 use fastrace::prelude::SpanRecord;
-use header::Header;
-use reqwest::blocking::Client;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use rmp_serde::Serializer;
 use serde::Serialize;
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct BetterstackMessage<'a> {
     pub source: Cow<'a, str>,
     pub message: Cow<'a, str>,
@@ -19,17 +18,15 @@ pub struct BetterstackMessage<'a> {
 }
 
 pub struct BetterstackReporter {
-    ingest_host: String,
-    token: String,
-    client: Client,
+    ingest_host: Arc<str>,
+    token: Arc<str>,
 }
 
 impl BetterstackReporter {
-    pub fn new(ingest_host: impl Into<String>, token: impl Into<String>) -> Self {
+    pub fn new(ingest_host: impl Into<Arc<str>>, token: impl Into<Arc<str>>) -> Self {
         BetterstackReporter {
             ingest_host: ingest_host.into(),
             token: token.into(),
-            client: Client::new(),
         }
     }
 
@@ -63,34 +60,12 @@ impl BetterstackReporter {
         Ok(buf)
     }
 
-    fn try_report(&self, spans: &[SpanRecord]) -> Result<()> {
-        let messages = self.convert(spans);
-        let bytes = self.serialize(messages)?;
+    fn try_report(&self, spans: Vec<SpanRecord>) -> Result<()> {
+        let spans = self.convert(&spans);
+        let bytes = self.serialize(spans)?;
 
-        let headers = Header::builder()
-            .insert(AUTHORIZATION, &format!("Bearer {}", self.token))
-            .context("Invalid authorization header")?
-            .insert(CONTENT_TYPE, "application/msgpack")
-            .context("Invalid content type header")?
-            .build();
-
-        let response = self
-            .client
-            .post(&self.ingest_host)
-            .headers(headers)
-            .body(bytes)
-            .send()
-            .context("Failed to send request to Better Stack")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_body = response.text().unwrap_or_else(|_| "<empty>".into());
-            anyhow::bail!(
-                "Better Stack API error: status={}, body={}",
-                status,
-                error_body
-            );
-        }
+        let client = BetterStackClient::new(self.ingest_host.clone(), self.token.clone());
+        let _ = client.send_message(bytes)?;
 
         Ok(())
     }
@@ -102,7 +77,7 @@ impl Reporter for BetterstackReporter {
             return;
         }
 
-        if let Err(err) = self.try_report(&spans) {
+        if let Err(err) = self.try_report(spans) {
             log::error!("Failed to report to Better Stack: {:#}", err);
         }
     }
