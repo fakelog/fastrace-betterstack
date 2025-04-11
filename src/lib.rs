@@ -1,3 +1,4 @@
+pub mod appender;
 mod client;
 
 use std::borrow::Cow;
@@ -11,7 +12,7 @@ use rmp_serde::Serializer;
 use serde::Serialize;
 
 #[derive(Serialize, Debug)]
-pub struct BetterstackMessage<'a> {
+pub struct BetterstackSpan<'a> {
     pub source: Cow<'a, str>,
     pub message: Cow<'a, str>,
     pub level: Cow<'a, str>,
@@ -30,7 +31,7 @@ impl BetterstackReporter {
         }
     }
 
-    fn convert<'a>(&self, spans: &'a [SpanRecord]) -> Vec<BetterstackMessage<'a>> {
+    fn convert<'a>(&self, spans: &'a [SpanRecord]) -> Vec<BetterstackSpan<'a>> {
         spans
             .iter()
             .flat_map(|span| {
@@ -41,7 +42,7 @@ impl BetterstackReporter {
                         .find(|(key, _)| *key == "level")
                         .map_or("INFO", |(_, val)| val);
 
-                    BetterstackMessage {
+                    BetterstackSpan {
                         source: Cow::Borrowed(&span.name),
                         message: Cow::Borrowed(&event.name),
                         level: Cow::Borrowed(level),
@@ -51,7 +52,7 @@ impl BetterstackReporter {
             .collect()
     }
 
-    fn serialize(&self, spans: Vec<BetterstackMessage<'_>>) -> Result<Vec<u8>> {
+    fn serialize(&self, spans: Vec<BetterstackSpan<'_>>) -> Result<Vec<u8>> {
         let mut buf = Vec::new();
         spans
             .serialize(&mut Serializer::new(&mut buf).with_struct_map())
